@@ -30,3 +30,20 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# SQLite
+familiz.db
+familiz.db-shm
+familiz.db-wal
+
+# Env
+.env
+
+# Binaries
+familiz
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo"
