@@ -68,8 +68,10 @@ func main() {
 		r.Delete("/transactions/{id}", transactions.DeleteTransactionHandler)
 
 		// Events
-		r.Post("/events", events.CreateEvent)
-		r.Get("/events", events.GetMemberEvents)
+		r.Post("/events", events.CreateEventHandler)
+		r.Get("/events", events.ListEventsHandler) // ?member_id=1
+		r.Put("/events/{id}", events.UpdateEventHandler)
+		r.Delete("/events/{id}", events.DeleteEventHandler)
 	})
 
 	log.Println("🚀FAMILIZ dispo sur http://localhost:8080")
