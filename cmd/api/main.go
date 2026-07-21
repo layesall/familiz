@@ -52,20 +52,22 @@ func main() {
 
 	// Routes protégées par JWT
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Authenticate) // Toutes les routes dans ce groupe nécessitent un token
+		r.Use(auth.Authenticate)
 
-		// Gestion des membres
-		r.Post("/members", members.CreateMember)
-		r.Get("/members", members.ListMembers)
+		// MEMBRES (CRUD complet)
+		r.Post("/members", members.CreateMemberHandler)
+		r.Get("/members", members.ListMembersHandler)
+		r.Get("/members/{id}", members.GetMemberHandler)
+		r.Put("/members/{id}", members.UpdateMemberHandler)
+		r.Delete("/members/{id}", members.DeleteMemberHandler)
 
-		// TRANSACTIONS
+		// Transactions
 		r.Post("/transactions", transactions.CreateTransaction)
 		r.Get("/transactions", transactions.GetMemberTransactions)
 
-		// ÉVÉNEMENTS (NOUVEAU)
+		// Events
 		r.Post("/events", events.CreateEvent)
 		r.Get("/events", events.GetMemberEvents)
-
 	})
 
 	log.Println("🚀FAMILIZ dispo sur http://localhost:8080")

@@ -26,6 +26,12 @@ func Init() {
 		log.Fatal("Erreur d'ouverture de la base:", err)
 	}
 
+	// ACTIVER les clés étrangeres
+	_, err = DB.Exec("PRAGMA foreign_keys = ON")
+	if err != nil {
+		log.Fatal("Erreur activation FK:", err)
+	}
+
 	// Lit le fichier de migration
 	migrationPath := filepath.Join(migrationsDir, "001_init.sql")
 	schemaBytes, err := os.ReadFile(migrationPath)
