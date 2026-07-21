@@ -1,4 +1,4 @@
-package events
+package transactions
 
 import (
 	"encoding/json"
@@ -6,18 +6,19 @@ import (
 	"strconv"
 
 	"familiz/internal/database"
+	"familiz/internal/services"
 	"familiz/internal/utils"
 )
 
 // --- CREATE Handler ---
-func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
+func CreateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
 		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
 		return
 	}
 
-	var req CreateEventRequest
+	var req CreateTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Format JSON invalide: "+err.Error(), http.StatusBadRequest)
 		return
@@ -28,95 +29,95 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "member_id est obligatoire", http.StatusBadRequest)
 		return
 	}
-	if req.Type != "wedding" && req.Type != "baptism" {
-		http.Error(w, "type doit être 'wedding' ou 'baptism'", http.StatusBadRequest)
+	if req.Month < 1 || req.Month > 12 {
+		http.Error(w, "mois invalide (1-12)", http.StatusBadRequest)
 		return
 	}
-	if req.AmountReceived < 0 {
-		http.Error(w, "amount_received ne peut pas être négatif", http.StatusBadRequest)
-		return
-	}
-	if req.EventDate == "" {
-		http.Error(w, "event_date est obligatoire (format YYYY-MM-DD)", http.StatusBadRequest)
+	if req.Year < 2000 {
+		http.Error(w, "année invalide", http.StatusBadRequest)
 		return
 	}
 
-	// Vérifier que le membre existe
+	// GESTION DU MONTANT : Auto-calcul ou valeur saisie
+	var finalAmount float64
+	finalAmount, err := services.CalculateTransactionAmount(req.MemberID, req.Amount)
+	if err != nil {
+		http.Error(w, "Erreur de calcul: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Vérifier l'existence du membre (redondant mais sécurité)
 	var exists int
-	err := database.DB.QueryRow("SELECT id FROM members WHERE id = ?", req.MemberID).Scan(&exists)
+	err = database.DB.QueryRow("SELECT id FROM members WHERE id = ?", req.MemberID).Scan(&exists)
 	if err != nil {
 		http.Error(w, "Membre introuvable", http.StatusNotFound)
 		return
 	}
 
-	// Insertion
-	eventID, err := CreateEventRepo(req.MemberID, req.Type, req.AmountReceived, req.EventDate)
+	// Insertion : on utilise finalAmount (CORRECTION)
+	transactionID, err := CreateTransactionRepo(req.MemberID, req.Month, req.Year, finalAmount, req.Note)
 	if err != nil {
-		http.Error(w, "Erreur insertion événement: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Erreur insertion: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":         "Événement enregistré avec succès",
-		"event_id":        eventID,
-		"member_id":       req.MemberID,
-		"type":            req.Type,
-		"amount_received": req.AmountReceived,
-		"event_date":      req.EventDate,
+		"message":        "Paiement enregistré avec succès",
+		"transaction_id": transactionID,
+		"member_id":      req.MemberID,
+		"month":          req.Month,
+		"year":           req.Year,
+		"amount":         finalAmount, // CORRECTION : on renvoie le montant final
 	})
 }
 
 // --- LIST (avec ou sans filtre) Handler ---
-func ListEventsHandler(w http.ResponseWriter, r *http.Request) {
+func ListTransactionsHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
 		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
 		return
 	}
 
-	// Vérifier si le paramètre member_id est présent
 	memberIDStr := r.URL.Query().Get("member_id")
 	if memberIDStr != "" {
-		// Mode FILTRE : on récupère par membre
 		memberID, err := strconv.Atoi(memberIDStr)
 		if err != nil {
 			http.Error(w, "member_id invalide", http.StatusBadRequest)
 			return
 		}
 
-		evts, err := GetEventsByMemberID(memberID)
+		txs, err := GetTransactionsByMemberID(memberID)
 		if err != nil {
-			http.Error(w, "Erreur récupération événements: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Erreur récupération transactions: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(evts)
+		json.NewEncoder(w).Encode(txs)
 		return
 	}
 
-	// Mode GLOBAL : tous les événements
-	evts, err := GetAllEvents()
+	txs, err := GetAllTransactions()
 	if err != nil {
-		http.Error(w, "Erreur récupération événements: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Erreur récupération transactions: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(evts)
+	json.NewEncoder(w).Encode(txs)
 }
 
-// --- UPDATE Handler (NOUVEAU) ---
-func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
+// --- UPDATE Handler ---
+func UpdateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
 		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
 		return
 	}
 
-	// Extraire l'ID de l'URL
-	idStr := r.URL.Path[len("/events/"):]
+	idStr := r.URL.Path[len("/transactions/"):]
 	if idStr == "" {
 		http.Error(w, "ID manquant", http.StatusBadRequest)
 		return
@@ -127,42 +128,39 @@ func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Vérifier que l'événement existe
-	existing, err := GetEventByID(id)
+	existing, err := GetTransactionByID(id)
 	if err != nil {
 		http.Error(w, "Erreur base de données", http.StatusInternalServerError)
 		return
 	}
 	if existing == nil {
-		http.Error(w, "Événement introuvable", http.StatusNotFound)
+		http.Error(w, "Transaction introuvable", http.StatusNotFound)
 		return
 	}
 
-	// Décoder la requête
-	var req UpdateEventRequest
+	var req UpdateTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Requête invalide: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	// Validations
-	if req.Type != "wedding" && req.Type != "baptism" {
-		http.Error(w, "type doit être 'wedding' ou 'baptism'", http.StatusBadRequest)
+	if req.Month < 1 || req.Month > 12 {
+		http.Error(w, "mois invalide (1-12)", http.StatusBadRequest)
 		return
 	}
-	if req.AmountReceived < 0 {
-		http.Error(w, "amount_received ne peut pas être négatif", http.StatusBadRequest)
+	if req.Year < 2000 {
+		http.Error(w, "année invalide", http.StatusBadRequest)
 		return
 	}
-	if req.EventDate == "" {
-		http.Error(w, "event_date est obligatoire (format YYYY-MM-DD)", http.StatusBadRequest)
+	if req.Amount <= 0 {
+		http.Error(w, "montant doit être > 0", http.StatusBadRequest) // CORRECTION : on garde cette validation pour l'update
 		return
 	}
 
-	// Mise à jour
-	err = UpdateEventRepo(id, req)
+	err = UpdateTransactionRepo(id, req)
 	if err != nil {
-		if err.Error() == "événement introuvable" {
+		if err.Error() == "transaction introuvable" {
 			http.Error(w, err.Error(), http.StatusNotFound)
 		} else {
 			http.Error(w, "Erreur mise à jour: "+err.Error(), http.StatusInternalServerError)
@@ -172,20 +170,19 @@ func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Événement mis à jour avec succès",
+		"message": "Transaction mise à jour avec succès",
 	})
 }
 
-// --- DELETE Handler (NOUVEAU) ---
-func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
+// --- DELETE Handler ---
+func DeleteTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
 		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
 		return
 	}
 
-	// Extraire l'ID
-	idStr := r.URL.Path[len("/events/"):]
+	idStr := r.URL.Path[len("/transactions/"):]
 	if idStr == "" {
 		http.Error(w, "ID manquant", http.StatusBadRequest)
 		return
@@ -196,10 +193,9 @@ func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Supprimer
-	err = DeleteEventRepo(id)
+	err = DeleteTransactionRepo(id)
 	if err != nil {
-		if err.Error() == "événement introuvable" {
+		if err.Error() == "transaction introuvable" {
 			http.Error(w, err.Error(), http.StatusNotFound)
 		} else {
 			http.Error(w, "Erreur suppression: "+err.Error(), http.StatusInternalServerError)
@@ -209,6 +205,6 @@ func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Événement supprimé avec succès",
+		"message": "Transaction supprimée avec succès",
 	})
 }

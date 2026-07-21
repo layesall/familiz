@@ -44,3 +44,28 @@ CREATE TABLE IF NOT EXISTS events (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 );
+
+-- Table des montants de cotisation par statut (une seule ligne)
+CREATE TABLE IF NOT EXISTS contribution_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1), -- On force une ligne unique
+    amount_single REAL NOT NULL DEFAULT 10.0,
+    amount_married REAL NOT NULL DEFAULT 15.0,
+    amount_minor REAL NOT NULL DEFAULT 5.0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- On insère la ligne par défaut si elle n'existe pas
+INSERT OR IGNORE INTO contribution_settings (id, amount_single, amount_married, amount_minor)
+VALUES (1, 10.0, 15.0, 5.0);
+
+-- Table des montants par défaut pour les événements
+CREATE TABLE IF NOT EXISTS event_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL UNIQUE CHECK(event_type IN ('wedding', 'baptism')),
+    default_amount REAL NOT NULL DEFAULT 200.0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insérer les valeurs par défaut
+INSERT OR IGNORE INTO event_settings (event_type, default_amount) VALUES ('wedding', 200.0);
+INSERT OR IGNORE INTO event_settings (event_type, default_amount) VALUES ('baptism', 200.0);

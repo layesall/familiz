@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"familiz/internal/apps/members"
 	"familiz/internal/database"
-	"familiz/internal/members"
 	"familiz/internal/utils"
 )
 
