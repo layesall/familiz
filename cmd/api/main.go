@@ -9,11 +9,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 
-	"familiz/internal/auth"
+	"familiz/internal/apps/auth"
+	"familiz/internal/apps/events"
+	"familiz/internal/apps/members"
+	"familiz/internal/apps/profile"
+	"familiz/internal/apps/settings"
+	"familiz/internal/apps/transactions"
 	"familiz/internal/database"
-	"familiz/internal/events"
-	"familiz/internal/members"
-	"familiz/internal/transactions"
 )
 
 func main() {
@@ -57,9 +59,11 @@ func main() {
 		// MEMBRES (CRUD complet)
 		r.Post("/members", members.CreateMemberHandler)
 		r.Get("/members", members.ListMembersHandler)
-		r.Get("/members/{id}", members.GetMemberHandler)
 		r.Put("/members/{id}", members.UpdateMemberHandler)
 		r.Delete("/members/{id}", members.DeleteMemberHandler)
+
+		// PROFILE
+		r.Get("/profile/{id}", profile.GetMemberProfileHandler)
 
 		// Transactions
 		r.Post("/transactions", transactions.CreateTransactionHandler)
@@ -72,6 +76,12 @@ func main() {
 		r.Get("/events", events.ListEventsHandler) // ?member_id=1
 		r.Put("/events/{id}", events.UpdateEventHandler)
 		r.Delete("/events/{id}", events.DeleteEventHandler)
+
+		// SETTINGS
+		r.Get("/settings/contributions", settings.GetContributionSettingsHandler)
+		r.Put("/settings/contributions", settings.UpdateContributionSettingsHandler)
+		r.Get("/settings/events", settings.GetEventSettingsHandler)
+		r.Put("/settings/events/{type}", settings.UpdateEventSettingHandler)
 	})
 
 	log.Println("🚀FAMILIZ dispo sur http://localhost:8080")
