@@ -62,8 +62,10 @@ func main() {
 		r.Delete("/members/{id}", members.DeleteMemberHandler)
 
 		// Transactions
-		r.Post("/transactions", transactions.CreateTransaction)
-		r.Get("/transactions", transactions.GetMemberTransactions)
+		r.Post("/transactions", transactions.CreateTransactionHandler)
+		r.Get("/transactions", transactions.ListTransactionsHandler) // Gère ?member_id= X
+		r.Put("/transactions/{id}", transactions.UpdateTransactionHandler)
+		r.Delete("/transactions/{id}", transactions.DeleteTransactionHandler)
 
 		// Events
 		r.Post("/events", events.CreateEvent)

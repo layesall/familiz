@@ -9,66 +9,53 @@ import (
 	"familiz/internal/utils"
 )
 
-// CreateTransaction gère POST /transactions
-func CreateTransaction(w http.ResponseWriter, r *http.Request) {
-	// 1. Vérifier que l'utilisateur connecté est bien admin (rôle)
+// --- CREATE Handler ---
+func CreateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
 		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
 		return
 	}
 
-	// 2. Lire le corps de la requête (JSON)
 	var req CreateTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Format JSON invalide: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// 3. VALIDATIONS (obligatoire pour éviter les erreurs en base)
+	// Validations
 	if req.MemberID <= 0 {
-		http.Error(w, "member_id est obligatoire et doit être > 0", http.StatusBadRequest)
+		http.Error(w, "member_id est obligatoire", http.StatusBadRequest)
 		return
 	}
 	if req.Month < 1 || req.Month > 12 {
-		http.Error(w, "mois invalide (doit être entre 1 et 12)", http.StatusBadRequest)
+		http.Error(w, "mois invalide (1-12)", http.StatusBadRequest)
 		return
 	}
-	if req.Year < 2000 || req.Year > 2100 {
+	if req.Year < 2000 {
 		http.Error(w, "année invalide", http.StatusBadRequest)
 		return
 	}
 	if req.Amount <= 0 {
-		http.Error(w, "le montant doit être supérieur à 0", http.StatusBadRequest)
+		http.Error(w, "montant doit être > 0", http.StatusBadRequest)
 		return
 	}
 
-	// 4. Vérifier que le membre existe vraiment (sécurité)
+	// Vérifier l'existence du membre
 	var exists int
 	err := database.DB.QueryRow("SELECT id FROM members WHERE id = ?", req.MemberID).Scan(&exists)
 	if err != nil {
-		http.Error(w, "Membre introuvable avec cet ID", http.StatusNotFound)
+		http.Error(w, "Membre introuvable", http.StatusNotFound)
 		return
 	}
 
-	// 5. Insérer la transaction en base
-	result, err := database.DB.Exec(`
-		INSERT INTO transactions (member_id, month, year, amount, note, paid_at, created_at)
-		VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-	`, req.MemberID, req.Month, req.Year, req.Amount, req.Note)
+	// Insertion
+	transactionID, err := CreateTransactionRepo(req.MemberID, req.Month, req.Year, req.Amount, req.Note)
 	if err != nil {
-		http.Error(w, "Erreur base de données lors de l'insertion: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Erreur insertion: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 6. Récupérer l'ID généré pour le renvoyer à l'admin
-	transactionID, err := result.LastInsertId()
-	if err != nil {
-		http.Error(w, "Erreur lors de la récupération de l'ID", http.StatusInternalServerError)
-		return
-	}
-
-	// 7. Réponse de succès (format JSON)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -81,59 +68,151 @@ func CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetMemberTransactions gère GET /transactions?member_id=1
-func GetMemberTransactions(w http.ResponseWriter, r *http.Request) {
-	// 1. Lire le paramètre dans l'URL
+// --- LIST (avec ou sans filtre) Handler ---
+func ListTransactionsHandler(w http.ResponseWriter, r *http.Request) {
+	// Vérification admin (optionnelle mais conseillée)
+	role, ok := r.Context().Value(utils.UserRoleKey).(string)
+	if !ok || role != "admin" {
+		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
+		return
+	}
+
+	// Vérifier si le paramètre member_id est présent
 	memberIDStr := r.URL.Query().Get("member_id")
-	if memberIDStr == "" {
-		http.Error(w, "Paramètre 'member_id' requis dans l'URL (ex: ?member_id=1)", http.StatusBadRequest)
-		return
-	}
-
-	memberID, err := strconv.Atoi(memberIDStr)
-	if err != nil {
-		http.Error(w, "member_id doit être un nombre valide", http.StatusBadRequest)
-		return
-	}
-
-	// 2. Optionnel : on peut aussi vérifier le rôle ici si on veut
-	// (mais la route est déjà protégée par le middleware)
-
-	// 3. Requête SQL pour récupérer toutes les transactions de ce membre
-	rows, err := database.DB.Query(`
-		SELECT id, member_id, month, year, amount, paid_at, note, created_at
-		FROM transactions
-		WHERE member_id = ?
-		ORDER BY year DESC, month DESC
-	`, memberID)
-	if err != nil {
-		http.Error(w, "Erreur lors de la lecture des transactions", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	// 4. Transformer les lignes SQL en slice de structs
-	var transactions []Transaction
-	for rows.Next() {
-		var t Transaction
-		err := rows.Scan(
-			&t.ID,
-			&t.MemberID,
-			&t.Month,
-			&t.Year,
-			&t.Amount,
-			&t.PaidAt,
-			&t.Note,
-			&t.CreatedAt,
-		)
+	if memberIDStr != "" {
+		// Mode FILTRE : on récupère par membre
+		memberID, err := strconv.Atoi(memberIDStr)
 		if err != nil {
-			http.Error(w, "Erreur lors du parsing des données", http.StatusInternalServerError)
+			http.Error(w, "member_id invalide", http.StatusBadRequest)
 			return
 		}
-		transactions = append(transactions, t)
+
+		txs, err := GetTransactionsByMemberID(memberID)
+		if err != nil {
+			http.Error(w, "Erreur récupération transactions: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(txs)
+		return
 	}
 
-	// 5. Renvoyer la liste en JSON
+	// Mode GLOBAL : toutes les transactions
+	txs, err := GetAllTransactions()
+	if err != nil {
+		http.Error(w, "Erreur récupération transactions: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(transactions)
+	json.NewEncoder(w).Encode(txs)
+}
+
+// --- GET BY ID (pour l'update/delete) ---
+// On ne va pas exposer cette route directement en GET, mais on l'utilise en interne pour les vérifications.
+
+// --- UPDATE Handler (NOUVEAU) ---
+func UpdateTransactionHandler(w http.ResponseWriter, r *http.Request) {
+	role, ok := r.Context().Value(utils.UserRoleKey).(string)
+	if !ok || role != "admin" {
+		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
+		return
+	}
+
+	// Extraire l'ID de l'URL
+	idStr := r.URL.Path[len("/transactions/"):]
+	if idStr == "" {
+		http.Error(w, "ID manquant", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "ID invalide", http.StatusBadRequest)
+		return
+	}
+
+	// Vérifier que la transaction existe
+	existing, err := GetTransactionByID(id)
+	if err != nil {
+		http.Error(w, "Erreur base de données", http.StatusInternalServerError)
+		return
+	}
+	if existing == nil {
+		http.Error(w, "Transaction introuvable", http.StatusNotFound)
+		return
+	}
+
+	// Décoder la requête
+	var req UpdateTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Requête invalide: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validations
+	if req.Month < 1 || req.Month > 12 {
+		http.Error(w, "mois invalide (1-12)", http.StatusBadRequest)
+		return
+	}
+	if req.Year < 2000 {
+		http.Error(w, "année invalide", http.StatusBadRequest)
+		return
+	}
+	if req.Amount <= 0 {
+		http.Error(w, "montant doit être > 0", http.StatusBadRequest)
+		return
+	}
+
+	// Mise à jour
+	err = UpdateTransactionRepo(id, req)
+	if err != nil {
+		if err.Error() == "transaction introuvable" {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		} else {
+			http.Error(w, "Erreur mise à jour: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Transaction mise à jour avec succès",
+	})
+}
+
+// --- DELETE Handler (NOUVEAU) ---
+func DeleteTransactionHandler(w http.ResponseWriter, r *http.Request) {
+	role, ok := r.Context().Value(utils.UserRoleKey).(string)
+	if !ok || role != "admin" {
+		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
+		return
+	}
+
+	// Extraire l'ID
+	idStr := r.URL.Path[len("/transactions/"):]
+	if idStr == "" {
+		http.Error(w, "ID manquant", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "ID invalide", http.StatusBadRequest)
+		return
+	}
+
+	// Supprimer
+	err = DeleteTransactionRepo(id)
+	if err != nil {
+		if err.Error() == "transaction introuvable" {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		} else {
+			http.Error(w, "Erreur suppression: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Transaction supprimée avec succès",
+	})
 }
