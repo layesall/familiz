@@ -13,6 +13,7 @@ import (
 	"familiz/internal/apps/events"
 	"familiz/internal/apps/members"
 	"familiz/internal/apps/profile"
+	"familiz/internal/apps/reports"
 	"familiz/internal/apps/settings"
 	"familiz/internal/apps/transactions"
 	"familiz/internal/database"
@@ -84,6 +85,10 @@ func main() {
 		r.Put("/settings/events/{type}", settings.UpdateEventSettingHandler)
 		r.Post("/settings/archive", settings.ArchiveYearHandler)
 		r.Post("/settings/unarchive", settings.UnarchiveYearHandler)
+
+		// PDF Reports
+		r.Get("/members/{id}/pdf", reports.MemberPDFHandler)
+		r.Get("/reports/pdf", reports.GlobalReportPDFHandler)
 	})
 
 	log.Println("🚀FAMILIZ dispo sur http://localhost:8080")
