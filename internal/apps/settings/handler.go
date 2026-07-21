@@ -3,11 +3,12 @@ package settings
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
+	"familiz/internal/database"
 	"familiz/internal/utils"
 )
 
-// --- GET /settings/contributions ---
 func GetContributionSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -25,7 +26,6 @@ func GetContributionSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(settings)
 }
 
-// --- PUT /settings/contributions ---
 func UpdateContributionSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -51,7 +51,6 @@ func UpdateContributionSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- GET /settings/events ---
 func GetEventSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -69,7 +68,6 @@ func GetEventSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(settings)
 }
 
-// --- PUT /settings/events/{type} ---
 func UpdateEventSettingHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -77,7 +75,6 @@ func UpdateEventSettingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extraire le type depuis l'URL
 	eventType := r.URL.Path[len("/settings/events/"):]
 	if eventType == "" {
 		http.Error(w, "Type d'événement manquant (wedding ou baptism)", http.StatusBadRequest)
@@ -103,5 +100,48 @@ func UpdateEventSettingHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "Paramètre événement mis à jour avec succès",
+	})
+}
+
+// --- ARCHIVAGE HANDLER ---
+
+func ArchiveYearHandler(w http.ResponseWriter, r *http.Request) {
+	role, ok := r.Context().Value(utils.UserRoleKey).(string)
+	if !ok || role != "admin" {
+		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
+		return
+	}
+
+	currentYear, err := GetCurrentYear()
+	if err != nil {
+		http.Error(w, "Erreur récupération année: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Vérifier s'il y a des données pour cette année
+	var count int
+	err = database.DB.QueryRow(`
+        SELECT COUNT(*) FROM transactions WHERE year = ? AND is_archived = 0
+    `, currentYear).Scan(&count)
+	if err != nil {
+		http.Error(w, "Erreur vérification transactions", http.StatusInternalServerError)
+		return
+	}
+	if count == 0 {
+		http.Error(w, "Aucune transaction à archiver pour l'année "+strconv.Itoa(currentYear), http.StatusBadRequest)
+		return
+	}
+
+	err = ArchiveYear()
+	if err != nil {
+		http.Error(w, "Erreur lors de l'archivage: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":       "Année archivée avec succès",
+		"archived_year": currentYear,
+		"new_year":      currentYear + 1,
 	})
 }

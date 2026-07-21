@@ -6,11 +6,10 @@ import (
 	"familiz/internal/database"
 )
 
-// --- CREATE ---
 func CreateEventRepo(memberID int, eventType string, amountReceived float64, eventDate string) (int64, error) {
 	result, err := database.DB.Exec(`
-        INSERT INTO events (member_id, type, amount_received, event_date, created_at, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+        INSERT INTO events (member_id, type, amount_received, event_date, created_at, updated_at, is_archived)
+        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), 0)
     `, memberID, eventType, amountReceived, eventDate)
 	if err != nil {
 		return 0, err
@@ -18,14 +17,18 @@ func CreateEventRepo(memberID int, eventType string, amountReceived float64, eve
 	return result.LastInsertId()
 }
 
-// --- READ (by Member ID) ---
-func GetEventsByMemberID(memberID int) ([]Event, error) {
-	rows, err := database.DB.Query(`
-        SELECT id, member_id, type, amount_received, event_date, created_at, updated_at
+func GetEventsByMemberID(memberID int, includeArchived bool) ([]Event, error) {
+	query := `
+        SELECT id, member_id, type, amount_received, event_date, created_at, updated_at, is_archived
         FROM events
         WHERE member_id = ?
-        ORDER BY event_date DESC
-    `, memberID)
+    `
+	if !includeArchived {
+		query += " AND is_archived = 0"
+	}
+	query += " ORDER BY event_date DESC"
+
+	rows, err := database.DB.Query(query, memberID)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +37,7 @@ func GetEventsByMemberID(memberID int) ([]Event, error) {
 	var evts []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.MemberID, &e.Type, &e.AmountReceived, &e.EventDate, &e.CreatedAt, &e.UpdatedAt)
+		err := rows.Scan(&e.ID, &e.MemberID, &e.Type, &e.AmountReceived, &e.EventDate, &e.CreatedAt, &e.UpdatedAt, &e.IsArchived)
 		if err != nil {
 			return nil, err
 		}
@@ -43,13 +46,17 @@ func GetEventsByMemberID(memberID int) ([]Event, error) {
 	return evts, nil
 }
 
-// --- READ (ALL) NOUVEAU ---
-func GetAllEvents() ([]Event, error) {
-	rows, err := database.DB.Query(`
-        SELECT id, member_id, type, amount_received, event_date, created_at, updated_at
+func GetAllEvents(includeArchived bool) ([]Event, error) {
+	query := `
+        SELECT id, member_id, type, amount_received, event_date, created_at, updated_at, is_archived
         FROM events
-        ORDER BY event_date DESC, id DESC
-    `)
+    `
+	if !includeArchived {
+		query += " WHERE is_archived = 0"
+	}
+	query += " ORDER BY event_date DESC, id DESC"
+
+	rows, err := database.DB.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +65,7 @@ func GetAllEvents() ([]Event, error) {
 	var evts []Event
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(&e.ID, &e.MemberID, &e.Type, &e.AmountReceived, &e.EventDate, &e.CreatedAt, &e.UpdatedAt)
+		err := rows.Scan(&e.ID, &e.MemberID, &e.Type, &e.AmountReceived, &e.EventDate, &e.CreatedAt, &e.UpdatedAt, &e.IsArchived)
 		if err != nil {
 			return nil, err
 		}
@@ -67,14 +74,13 @@ func GetAllEvents() ([]Event, error) {
 	return evts, nil
 }
 
-// --- READ (by ID) NOUVEAU (pour vérifier l'existence) ---
 func GetEventByID(id int) (*Event, error) {
 	var e Event
 	err := database.DB.QueryRow(`
-        SELECT id, member_id, type, amount_received, event_date, created_at, updated_at
+        SELECT id, member_id, type, amount_received, event_date, created_at, updated_at, is_archived
         FROM events
         WHERE id = ?
-    `, id).Scan(&e.ID, &e.MemberID, &e.Type, &e.AmountReceived, &e.EventDate, &e.CreatedAt, &e.UpdatedAt)
+    `, id).Scan(&e.ID, &e.MemberID, &e.Type, &e.AmountReceived, &e.EventDate, &e.CreatedAt, &e.UpdatedAt, &e.IsArchived)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -85,15 +91,20 @@ func GetEventByID(id int) (*Event, error) {
 	return &e, nil
 }
 
-// --- UPDATE (NOUVEAU) ---
 func UpdateEventRepo(id int, req UpdateEventRequest) error {
+	var isArchived bool
+	err := database.DB.QueryRow("SELECT is_archived FROM events WHERE id = ?", id).Scan(&isArchived)
+	if err != nil {
+		return err
+	}
+	if isArchived {
+		return errors.New("impossible de modifier un événement archivé")
+	}
+
 	result, err := database.DB.Exec(`
         UPDATE events
-        SET type = ?,
-            amount_received = ?,
-            event_date = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
+        SET type = ?, amount_received = ?, event_date = ?, updated_at = datetime('now')
+        WHERE id = ? AND is_archived = 0
     `, req.Type, req.AmountReceived, req.EventDate, id)
 	if err != nil {
 		return err
@@ -104,14 +115,22 @@ func UpdateEventRepo(id int, req UpdateEventRequest) error {
 		return err
 	}
 	if rowsAffected == 0 {
-		return errors.New("événement introuvable")
+		return errors.New("événement introuvable ou déjà archivé")
 	}
 	return nil
 }
 
-// --- DELETE (NOUVEAU) ---
 func DeleteEventRepo(id int) error {
-	result, err := database.DB.Exec("DELETE FROM events WHERE id = ?", id)
+	var isArchived bool
+	err := database.DB.QueryRow("SELECT is_archived FROM events WHERE id = ?", id).Scan(&isArchived)
+	if err != nil {
+		return err
+	}
+	if isArchived {
+		return errors.New("impossible de supprimer un événement archivé")
+	}
+
+	result, err := database.DB.Exec("DELETE FROM events WHERE id = ? AND is_archived = 0", id)
 	if err != nil {
 		return err
 	}
@@ -121,7 +140,7 @@ func DeleteEventRepo(id int) error {
 		return err
 	}
 	if rowsAffected == 0 {
-		return errors.New("événement introuvable")
+		return errors.New("événement introuvable ou déjà archivé")
 	}
 	return nil
 }

@@ -69,3 +69,7 @@ CREATE TABLE IF NOT EXISTS event_settings (
 -- Insérer les valeurs par défaut
 INSERT OR IGNORE INTO event_settings (event_type, default_amount) VALUES ('wedding', 200.0);
 INSERT OR IGNORE INTO event_settings (event_type, default_amount) VALUES ('baptism', 200.0);
+
+ALTER TABLE transactions ADD COLUMN is_archived BOOLEAN DEFAULT 0;
+ALTER TABLE events ADD COLUMN is_archived BOOLEAN DEFAULT 0;
+ALTER TABLE contribution_settings ADD COLUMN current_year INTEGER DEFAULT 2026;

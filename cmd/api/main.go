@@ -82,6 +82,7 @@ func main() {
 		r.Put("/settings/contributions", settings.UpdateContributionSettingsHandler)
 		r.Get("/settings/events", settings.GetEventSettingsHandler)
 		r.Put("/settings/events/{type}", settings.UpdateEventSettingHandler)
+		r.Post("/settings/archive", settings.ArchiveYearHandler)
 	})
 
 	log.Println("🚀FAMILIZ dispo sur http://localhost:8080")

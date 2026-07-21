@@ -10,7 +10,6 @@ import (
 	"familiz/internal/utils"
 )
 
-// --- CREATE Handler ---
 func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -24,7 +23,6 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validations
 	if req.MemberID <= 0 {
 		http.Error(w, "member_id est obligatoire", http.StatusBadRequest)
 		return
@@ -38,15 +36,12 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GESTION DU MONTANT : Auto-calcul ou valeur saisie
-	var finalAmount float64
 	finalAmount, err := services.CalculateEventAmount(req.Type, req.AmountReceived)
 	if err != nil {
 		http.Error(w, "Erreur de calcul: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Vérifier que le membre existe
 	var exists int
 	err = database.DB.QueryRow("SELECT id FROM members WHERE id = ?", req.MemberID).Scan(&exists)
 	if err != nil {
@@ -54,7 +49,6 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insertion : on utilise finalAmount (CORRECTION)
 	eventID, err := CreateEventRepo(req.MemberID, req.Type, finalAmount, req.EventDate)
 	if err != nil {
 		http.Error(w, "Erreur insertion événement: "+err.Error(), http.StatusInternalServerError)
@@ -68,18 +62,20 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 		"event_id":        eventID,
 		"member_id":       req.MemberID,
 		"type":            req.Type,
-		"amount_received": finalAmount, // CORRECTION : on renvoie le montant final
+		"amount_received": finalAmount,
 		"event_date":      req.EventDate,
 	})
 }
 
-// --- LIST (avec ou sans filtre) Handler ---
 func ListEventsHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
 		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
 		return
 	}
+
+	// Paramètre ?archived=true
+	includeArchived := r.URL.Query().Get("archived") == "true"
 
 	memberIDStr := r.URL.Query().Get("member_id")
 	if memberIDStr != "" {
@@ -89,7 +85,7 @@ func ListEventsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		evts, err := GetEventsByMemberID(memberID)
+		evts, err := GetEventsByMemberID(memberID, includeArchived)
 		if err != nil {
 			http.Error(w, "Erreur récupération événements: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -99,7 +95,7 @@ func ListEventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	evts, err := GetAllEvents()
+	evts, err := GetAllEvents(includeArchived)
 	if err != nil {
 		http.Error(w, "Erreur récupération événements: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -109,7 +105,6 @@ func ListEventsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(evts)
 }
 
-// --- UPDATE Handler ---
 func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -128,23 +123,12 @@ func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := GetEventByID(id)
-	if err != nil {
-		http.Error(w, "Erreur base de données", http.StatusInternalServerError)
-		return
-	}
-	if existing == nil {
-		http.Error(w, "Événement introuvable", http.StatusNotFound)
-		return
-	}
-
 	var req UpdateEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Requête invalide: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Validations
 	if req.Type != "wedding" && req.Type != "baptism" {
 		http.Error(w, "type doit être 'wedding' ou 'baptism'", http.StatusBadRequest)
 		return
@@ -160,8 +144,10 @@ func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = UpdateEventRepo(id, req)
 	if err != nil {
-		if err.Error() == "événement introuvable" {
+		if err.Error() == "événement introuvable ou déjà archivé" {
 			http.Error(w, err.Error(), http.StatusNotFound)
+		} else if err.Error() == "impossible de modifier un événement archivé" {
+			http.Error(w, err.Error(), http.StatusForbidden)
 		} else {
 			http.Error(w, "Erreur mise à jour: "+err.Error(), http.StatusInternalServerError)
 		}
@@ -174,7 +160,6 @@ func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- DELETE Handler ---
 func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -195,8 +180,10 @@ func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = DeleteEventRepo(id)
 	if err != nil {
-		if err.Error() == "événement introuvable" {
+		if err.Error() == "événement introuvable ou déjà archivé" {
 			http.Error(w, err.Error(), http.StatusNotFound)
+		} else if err.Error() == "impossible de supprimer un événement archivé" {
+			http.Error(w, err.Error(), http.StatusForbidden)
 		} else {
 			http.Error(w, "Erreur suppression: "+err.Error(), http.StatusInternalServerError)
 		}

@@ -8,6 +8,7 @@ type Event struct {
 	Type           string    `json:"type"`
 	AmountReceived float64   `json:"amount_received"`
 	EventDate      string    `json:"event_date"`
+	IsArchived     bool      `json:"is_archived"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

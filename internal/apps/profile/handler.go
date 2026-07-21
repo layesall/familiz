@@ -49,15 +49,16 @@ func GetMemberProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeArchived := r.URL.Query().Get("archived") == "true"
 	// Récupérer ses transactions
-	txs, err := transactions.GetTransactionsByMemberID(id)
+	txs, err := transactions.GetTransactionsByMemberID(id, includeArchived)
 	if err != nil {
 		http.Error(w, "Erreur récupération transactions", http.StatusInternalServerError)
 		return
 	}
 
 	// Récupérer ses événements
-	evts, err := events.GetEventsByMemberID(id)
+	evts, err := events.GetEventsByMemberID(id, includeArchived)
 	if err != nil {
 		http.Error(w, "Erreur récupération événements", http.StatusInternalServerError)
 		return

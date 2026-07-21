@@ -5,6 +5,7 @@ type ContributionSettings struct {
 	AmountSingle  float64 `json:"amount_single"`
 	AmountMarried float64 `json:"amount_married"`
 	AmountMinor   float64 `json:"amount_minor"`
+	CurrentYear   int     `json:"current_year"`
 	UpdatedAt     string  `json:"updated_at"`
 }
 

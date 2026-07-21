@@ -38,8 +38,8 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Créer l'utilisateur
-	_, err = CreateUser(req, memberID)
+	// Créer l'utilisateur (on passe la transaction tx)
+	_, err = CreateUser(tx, req, memberID) // <-- MODIFICATION ICI
 	if err != nil {
 		http.Error(w, "Erreur création utilisateur: "+err.Error(), http.StatusInternalServerError)
 		return

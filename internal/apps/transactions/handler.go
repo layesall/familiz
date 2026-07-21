@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"familiz/internal/apps/settings"
 	"familiz/internal/database"
 	"familiz/internal/services"
 	"familiz/internal/utils"
@@ -33,20 +34,23 @@ func CreateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mois invalide (1-12)", http.StatusBadRequest)
 		return
 	}
-	if req.Year < 2000 {
-		http.Error(w, "année invalide", http.StatusBadRequest)
+
+	// FORCER l'année en cours (l'admin ne peut pas créer de transaction pour une année passée)
+	currentYear, err := settings.GetCurrentYear()
+	if err != nil {
+		http.Error(w, "Erreur récupération année en cours: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	req.Year = currentYear
 
-	// GESTION DU MONTANT : Auto-calcul ou valeur saisie
-	var finalAmount float64
+	// Calcul automatique du montant
 	finalAmount, err := services.CalculateTransactionAmount(req.MemberID, req.Amount)
 	if err != nil {
 		http.Error(w, "Erreur de calcul: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Vérifier l'existence du membre (redondant mais sécurité)
+	// Vérifier l'existence du membre
 	var exists int
 	err = database.DB.QueryRow("SELECT id FROM members WHERE id = ?", req.MemberID).Scan(&exists)
 	if err != nil {
@@ -54,7 +58,7 @@ func CreateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insertion : on utilise finalAmount (CORRECTION)
+	// Insertion
 	transactionID, err := CreateTransactionRepo(req.MemberID, req.Month, req.Year, finalAmount, req.Note)
 	if err != nil {
 		http.Error(w, "Erreur insertion: "+err.Error(), http.StatusInternalServerError)
@@ -69,11 +73,11 @@ func CreateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		"member_id":      req.MemberID,
 		"month":          req.Month,
 		"year":           req.Year,
-		"amount":         finalAmount, // CORRECTION : on renvoie le montant final
+		"amount":         finalAmount,
 	})
 }
 
-// --- LIST (avec ou sans filtre) Handler ---
+// --- LIST Handler ---
 func ListTransactionsHandler(w http.ResponseWriter, r *http.Request) {
 	role, ok := r.Context().Value(utils.UserRoleKey).(string)
 	if !ok || role != "admin" {
@@ -81,6 +85,10 @@ func ListTransactionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lire le paramètre ?archived=true (défaut : false)
+	includeArchived := r.URL.Query().Get("archived") == "true"
+
+	// Lire le paramètre ?member_id=...
 	memberIDStr := r.URL.Query().Get("member_id")
 	if memberIDStr != "" {
 		memberID, err := strconv.Atoi(memberIDStr)
@@ -89,7 +97,7 @@ func ListTransactionsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		txs, err := GetTransactionsByMemberID(memberID)
+		txs, err := GetTransactionsByMemberID(memberID, includeArchived)
 		if err != nil {
 			http.Error(w, "Erreur récupération transactions: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -99,7 +107,8 @@ func ListTransactionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	txs, err := GetAllTransactions()
+	// Mode GLOBAL
+	txs, err := GetAllTransactions(includeArchived)
 	if err != nil {
 		http.Error(w, "Erreur récupération transactions: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -128,23 +137,12 @@ func UpdateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := GetTransactionByID(id)
-	if err != nil {
-		http.Error(w, "Erreur base de données", http.StatusInternalServerError)
-		return
-	}
-	if existing == nil {
-		http.Error(w, "Transaction introuvable", http.StatusNotFound)
-		return
-	}
-
 	var req UpdateTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Requête invalide: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Validations
 	if req.Month < 1 || req.Month > 12 {
 		http.Error(w, "mois invalide (1-12)", http.StatusBadRequest)
 		return
@@ -154,14 +152,16 @@ func UpdateTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Amount <= 0 {
-		http.Error(w, "montant doit être > 0", http.StatusBadRequest) // CORRECTION : on garde cette validation pour l'update
+		http.Error(w, "montant doit être > 0", http.StatusBadRequest)
 		return
 	}
 
 	err = UpdateTransactionRepo(id, req)
 	if err != nil {
-		if err.Error() == "transaction introuvable" {
+		if err.Error() == "transaction introuvable ou déjà archivée" {
 			http.Error(w, err.Error(), http.StatusNotFound)
+		} else if err.Error() == "impossible de modifier une transaction archivée" {
+			http.Error(w, err.Error(), http.StatusForbidden)
 		} else {
 			http.Error(w, "Erreur mise à jour: "+err.Error(), http.StatusInternalServerError)
 		}
@@ -195,8 +195,10 @@ func DeleteTransactionHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = DeleteTransactionRepo(id)
 	if err != nil {
-		if err.Error() == "transaction introuvable" {
+		if err.Error() == "transaction introuvable ou déjà archivée" {
 			http.Error(w, err.Error(), http.StatusNotFound)
+		} else if err.Error() == "impossible de supprimer une transaction archivée" {
+			http.Error(w, err.Error(), http.StatusForbidden)
 		} else {
 			http.Error(w, "Erreur suppression: "+err.Error(), http.StatusInternalServerError)
 		}
