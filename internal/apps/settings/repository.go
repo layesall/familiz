@@ -149,3 +149,51 @@ func ArchiveYear() error {
 
 	return nil
 }
+
+// UnarchiveYear rétablit l'année précédente (uniquement si l'année en cours est vide)
+func UnarchiveYear() error {
+	currentYear, err := GetCurrentYear()
+	if err != nil {
+		return err
+	}
+
+	previousYear := currentYear - 1
+
+	// Vérifier que l'année en cours est vide (pour éviter d'écraser des données)
+	var count int
+	err = database.DB.QueryRow(`
+        SELECT COUNT(*) FROM transactions WHERE year = ? AND is_archived = 0
+    `, currentYear).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.New("impossible de désarchiver : l'année en cours contient déjà des transactions")
+	}
+
+	// Désarchiver les transactions
+	_, err = database.DB.Exec(`
+        UPDATE transactions SET is_archived = 0 WHERE year = ? AND is_archived = 1
+    `, previousYear)
+	if err != nil {
+		return err
+	}
+
+	// Désarchiver les événements
+	_, err = database.DB.Exec(`
+        UPDATE events SET is_archived = 0 WHERE strftime('%Y', event_date) = ? AND is_archived = 1
+    `, previousYear)
+	if err != nil {
+		return err
+	}
+
+	// Décrémenter l'année en cours
+	_, err = database.DB.Exec(`
+        UPDATE contribution_settings SET current_year = current_year - 1, updated_at = datetime('now') WHERE id = 1
+    `)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

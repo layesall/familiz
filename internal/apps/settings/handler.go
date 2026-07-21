@@ -112,6 +112,12 @@ func ArchiveYearHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	confirm := r.URL.Query().Get("confirm") == "true"
+	if !confirm {
+		http.Error(w, "Confirmation requise pour archiver. Ajoutez ?confirm=true", http.StatusBadRequest)
+		return
+	}
+
 	currentYear, err := GetCurrentYear()
 	if err != nil {
 		http.Error(w, "Erreur récupération année: "+err.Error(), http.StatusInternalServerError)
@@ -143,5 +149,43 @@ func ArchiveYearHandler(w http.ResponseWriter, r *http.Request) {
 		"message":       "Année archivée avec succès",
 		"archived_year": currentYear,
 		"new_year":      currentYear + 1,
+	})
+}
+
+// UnarchiveYearHandler gère POST /settings/unarchive
+func UnarchiveYearHandler(w http.ResponseWriter, r *http.Request) {
+	role, ok := r.Context().Value(utils.UserRoleKey).(string)
+	if !ok || role != "admin" {
+		http.Error(w, "Accès refusé : admin requis", http.StatusForbidden)
+		return
+	}
+
+	currentYear, err := GetCurrentYear()
+	if err != nil {
+		http.Error(w, "Erreur récupération année: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Vérifier que l'année précédente existe (>= 2026 par exemple)
+	if currentYear <= 2026 {
+		http.Error(w, "Impossible de désarchiver : année antérieure à 2026", http.StatusBadRequest)
+		return
+	}
+
+	err = UnarchiveYear()
+	if err != nil {
+		if err.Error() == "impossible de désarchiver : l'année en cours contient déjà des transactions" {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			http.Error(w, "Erreur lors du désarchivage: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":         "Désarchivage effectué avec succès",
+		"unarchived_year": currentYear - 1,
+		"current_year":    currentYear - 1,
 	})
 }
